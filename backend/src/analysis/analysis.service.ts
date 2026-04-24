@@ -301,7 +301,7 @@ export class AnalysisService {
         const result = await this.analyzeQuestionAudio(question, audioBase64, audioMimeType);
 
         console.log(`\n── Pregunta ${i + 1} / ${questionsWithAudio.length} (${question.id}) ──`);
-        console.log(JSON.stringify(result, null, 2));
+        // console.log(JSON.stringify(result, null, 2));
 
         analyses.push(result);
         // Brief pause between requests to stay within rate limits

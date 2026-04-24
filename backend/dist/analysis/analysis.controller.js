@@ -19,6 +19,8 @@ const jwt_auth_guard_1 = require("../auth/guards/jwt-auth.guard");
 const analysis_service_1 = require("./analysis.service");
 const reports_service_1 = require("../reports/reports.service");
 const multer_1 = require("multer");
+const fs = require("fs");
+const path = require("path");
 let AnalysisController = class AnalysisController {
     constructor(analysisService, reportsService) {
         this.analysisService = analysisService;
@@ -45,6 +47,19 @@ let AnalysisController = class AnalysisController {
         catch {
             throw new common_1.BadRequestException('questionsJson inválido');
         }
+        const testAudioDir = path.join(process.cwd(), 'test-audio');
+        if (!fs.existsSync(testAudioDir))
+            fs.mkdirSync(testAudioDir, { recursive: true });
+        files.forEach((file, index) => {
+            const q = questions[index];
+            const mime = file.mimetype || 'audio/webm';
+            const ext = mime.includes('mp4') ? 'mp4' : mime.includes('ogg') ? 'ogg' : 'webm';
+            const fileName = `${reportId}_${q?.id ?? index}.${ext}`;
+            const filePath = path.join(testAudioDir, fileName);
+            fs.writeFileSync(filePath, file.buffer);
+            const firstBytes = file.buffer.slice(0, 8).toString('hex');
+            console.log(`[AUDIO] saved ${fileName} — ${file.buffer.length} bytes — mime: ${mime} — first bytes: ${firstBytes}`);
+        });
         const questionsWithAudio = files.map((file, index) => ({
             question: questions[index],
             audioBase64: file.buffer.toString('base64'),

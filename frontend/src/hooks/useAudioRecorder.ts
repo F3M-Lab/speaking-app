@@ -38,10 +38,21 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      // Route the microphone through a fresh AudioContext so the MediaRecorder
+      // timestamps start from ~0 for every question. Without this, Chrome reuses
+      // the global audio clock, causing q2+ to have Cluster timecodes equal to
+      // the elapsed time since the first recording — making files appear to start
+      // late and producing codec-parameter mismatches when sharing the init segment.
+      const audioCtx = new AudioContext();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const dest = audioCtx.createMediaStreamDestination();
+      source.connect(dest);
+
       const mimeType = getSupportedMimeType();
       mimeTypeRef.current = mimeType || 'audio/webm';
 
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(dest.stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = recorder;
 
       recorder.ondataavailable = (e) => {
@@ -51,6 +62,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: mimeTypeRef.current });
         setAudioBlob(blob);
+        audioCtx.close();
         stream.getTracks().forEach((t) => t.stop());
         setIsRecording(false);
       };

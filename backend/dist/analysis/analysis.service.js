@@ -272,13 +272,14 @@ let AnalysisService = class AnalysisService {
             for (let i = 0; i < questionsWithAudio.length; i++) {
                 const { question, audioBase64, audioMimeType } = questionsWithAudio[i];
                 const audioBytesSize = Buffer.byteLength(audioBase64, 'base64');
-                if (audioBytesSize < 35_000) {
+                if (audioBytesSize < 2_000) {
                     console.log(`\n── Pregunta ${i + 1} / ${questionsWithAudio.length} (${question.id}) — OMITIDA (audio insuficiente: ${audioBytesSize} bytes) ──`);
                     analyses.push(this.getNoResponseAnalysis(question));
                     continue;
                 }
                 const result = await this.analyzeQuestionAudio(question, audioBase64, audioMimeType);
                 console.log(`\n── Pregunta ${i + 1} / ${questionsWithAudio.length} (${question.id}) ──`);
+                console.log(JSON.stringify(result, null, 2));
                 analyses.push(result);
                 if (i < questionsWithAudio.length - 1) {
                     await new Promise(resolve => setTimeout(resolve, 500));
@@ -321,7 +322,7 @@ Listen carefully to the ACTUAL AUDIO for pronunciation accuracy, fluency pattern
         const apiCall = async () => {
             const ai = this.getGeminiClient();
             const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
+                model: 'gemini-3.5-flash',
                 contents: {
                     parts: [
                         {
@@ -349,7 +350,21 @@ Listen carefully to the ACTUAL AUDIO for pronunciation accuracy, fluency pattern
             return { ...result, questionId: question.id, questionType: question.type };
         };
         try {
-            return await withRetry(apiCall);
+            const result = await withRetry(apiCall);
+            if (isReadAloud) {
+                const notEvaluated = { level: 'A1', score: 0, observations: 'No evaluado — criterio no aplicable para lectura de texto prescrito.' };
+                result.dimensions.grammar = notEvaluated;
+                result.dimensions.vocabulary = notEvaluated;
+                result.dimensions.interaction = notEvaluated;
+                const cefrOrder = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+                const pScore = result.dimensions.pronunciation?.score ?? 50;
+                const fScore = result.dimensions.fluency?.score ?? 50;
+                result.overallScore = Math.round((pScore + fScore) / 2);
+                const pIdx = cefrOrder.indexOf(result.dimensions.pronunciation?.level ?? 'B1');
+                const fIdx = cefrOrder.indexOf(result.dimensions.fluency?.level ?? 'B1');
+                result.overallLevel = cefrOrder[Math.min(Math.max(Math.round((pIdx + fIdx) / 2), 0), 5)];
+            }
+            return result;
         }
         catch (error) {
             console.error(`Error analyzing question ${question.id}:`, error);

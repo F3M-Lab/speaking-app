@@ -67,7 +67,17 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
         setIsRecording(false);
       };
 
-      recorder.start(250);
+      // Ensure AudioContext is running before recording starts
+      if (audioCtx.state !== 'running') await audioCtx.resume();
+      // Let the pipeline stabilise so the first ondataavailable always
+      // contains a complete WebM init segment (avoids corrupt recordings
+      // on Q2+ where the context needs a few frames to warm up)
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // No timeslice: ondataavailable fires once on stop() with the full
+      // recording including init segment — prevents the chunk-splitting
+      // issue where an empty first chunk causes unplayable WebM files
+      recorder.start();
       setIsRecording(true);
     } catch (err) {
       setError('No se pudo acceder al micrófono. Verifica los permisos.');

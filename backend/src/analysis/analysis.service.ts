@@ -290,9 +290,11 @@ export class AnalysisService {
       for (let i = 0; i < questionsWithAudio.length; i++) {
         const { question, audioBase64, audioMimeType } = questionsWithAudio[i];
 
-        // Deterministic guard: skip Gemini entirely for blobs under 30KB (~under 3 seconds of real audio at 48kbps WebM)
+        // Guard: skip Gemini only for truly empty/malformed blobs (< 2KB).
+        // Valid silent recordings are much larger due to WebM container overhead
+        // and are sent to Gemini so it can detect "no speech" per the system prompt.
         const audioBytesSize = Buffer.byteLength(audioBase64, 'base64');
-        if (audioBytesSize < 35_000) {
+        if (audioBytesSize < 2_000) {
           console.log(`\n── Pregunta ${i + 1} / ${questionsWithAudio.length} (${question.id}) — OMITIDA (audio insuficiente: ${audioBytesSize} bytes) ──`);
           analyses.push(this.getNoResponseAnalysis(question));
           continue;
@@ -301,7 +303,7 @@ export class AnalysisService {
         const result = await this.analyzeQuestionAudio(question, audioBase64, audioMimeType);
 
         console.log(`\n── Pregunta ${i + 1} / ${questionsWithAudio.length} (${question.id}) ──`);
-        // console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(result, null, 2));
 
         analyses.push(result);
         // Brief pause between requests to stay within rate limits
@@ -356,7 +358,7 @@ Listen carefully to the ACTUAL AUDIO for pronunciation accuracy, fluency pattern
       const ai = this.getGeminiClient();
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: 'gemini-3.5-flash',
         contents: {
           parts: [
             {
@@ -386,7 +388,28 @@ Listen carefully to the ACTUAL AUDIO for pronunciation accuracy, fluency pattern
     };
 
     try {
-      return await withRetry(apiCall);
+      const result = await withRetry(apiCall);
+
+      if (isReadAloud) {
+        // Grammar, Vocabulary, Interaction are not evaluated for read-aloud:
+        // the content belongs to the source text, not the speaker.
+        const notEvaluated = { level: 'A1', score: 0, observations: 'No evaluado — criterio no aplicable para lectura de texto prescrito.' };
+        result.dimensions.grammar    = notEvaluated;
+        result.dimensions.vocabulary = notEvaluated;
+        result.dimensions.interaction = notEvaluated;
+
+        // Recalculate overall using only Pronunciation + Fluency
+        const cefrOrder = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+        const pScore = result.dimensions.pronunciation?.score ?? 50;
+        const fScore = result.dimensions.fluency?.score ?? 50;
+        result.overallScore = Math.round((pScore + fScore) / 2);
+
+        const pIdx = cefrOrder.indexOf(result.dimensions.pronunciation?.level ?? 'B1');
+        const fIdx = cefrOrder.indexOf(result.dimensions.fluency?.level ?? 'B1');
+        result.overallLevel = cefrOrder[Math.min(Math.max(Math.round((pIdx + fIdx) / 2), 0), 5)];
+      }
+
+      return result;
     } catch (error) {
       console.error(`Error analyzing question ${question.id}:`, error);
       return this.getFallbackAnalysis(question);
